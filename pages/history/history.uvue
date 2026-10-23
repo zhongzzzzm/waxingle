@@ -1,0 +1,349 @@
+<template>
+  <view class="page">
+    <scroll-view class="body" :scroll-y="true">
+      <view class="chips">
+        <view class="chip chip-hl">
+          <text class="chip-text-hl">{{ nightChipText }}</text>
+        </view>
+        <view class="chip">
+          <text class="chip-text">{{ avgText }}</text>
+        </view>
+        <view class="chip">
+          <text class="chip-text">{{ monthText }}</text>
+        </view>
+      </view>
+      <view v-if="sections.length == 0" class="empty">
+        <text class="empty-main">还没有记录</text>
+        <text class="empty-sub">去「记录」点第一笔吧</text>
+      </view>
+      <view v-for="sec in sections" :key="sec.label" class="section">
+        <view class="month-seg">
+          <text class="month-text">{{ sec.label }}</text>
+        </view>
+        <view v-for="g in sec.nights" :key="g.night" class="card">
+          <view class="card-head" hover-class="card-head-press" @click="toggle(g.night)">
+            <text class="card-date">{{ g.dateLabel }}</text>
+            <view class="card-cnt">
+              <text class="card-cnt-text">醒了 {{ g.count }} 次</text>
+              <text class="card-arrow">{{ isExpanded(g.night) ? '▴' : '▾' }}</text>
+            </view>
+          </view>
+          <view v-if="isExpanded(g.night)" class="card-body">
+            <text class="card-window">{{ g.windowText }}</text>
+            <view v-for="item in g.list" :key="item.id" class="wake-item">
+              <text class="wake-time">{{ item.time }}</text>
+              <text class="wake-gap">{{ item.gap }}</text>
+              <view class="wake-del" hover-class="wake-del-press" @click="confirmDelete(item.id, item.ts)">
+                <text class="wake-del-text">×</text>
+              </view>
+            </view>
+          </view>
+        </view>
+      </view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { ref, computed } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
+import { loadAllRecords, deleteRecord, groupByNight } from '@/common/store.uts'
+import { WakeRecord, NightGroup } from '@/common/store.uts'
+import { fmtHM, fmtMD, weekdayCn, nightDate, nightStartTs, nightWindowText, gapText, latestNightKey, isNightTime } from '@/common/time.uts'
+
+type DisplayWake = {
+  id: string,
+  ts: number,
+  time: string,
+  gap: string
+}
+
+type DisplayNight = {
+  night: string,
+  dateLabel: string,
+  windowText: string,
+  count: number,
+  list: Array<DisplayWake>
+}
+
+type DisplaySection = {
+  label: string,
+  nights: Array<DisplayNight>
+}
+
+const nowTs = ref<number>(Date.now())
+const records = ref<Array<WakeRecord>>([])
+const expanded = ref<Array<string>>([])
+
+function isExpanded(night: string): boolean {
+  return expanded.value.indexOf(night) >= 0
+}
+
+function toggle(night: string) {
+  const idx = expanded.value.indexOf(night)
+  if (idx >= 0) {
+    expanded.value.splice(idx, 1)
+  } else {
+    expanded.value.push(night)
+  }
+}
+
+const nights = computed((): Array<DisplayNight> => {
+  const groups = groupByNight(records.value)
+  const out: Array<DisplayNight> = []
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i]
+    const startTs = nightStartTs(g.night)
+    const asc = g.list
+    const list: Array<DisplayWake> = []
+    for (let j = asc.length - 1; j >= 0; j--) {
+      const gap = j == 0 ? '本晚首次' : '距上次 ' + gapText(asc[j].ts - asc[j - 1].ts)
+      const item: DisplayWake = { id: asc[j].id, ts: asc[j].ts, time: fmtHM(asc[j].ts), gap: gap }
+      list.push(item)
+    }
+    const dn: DisplayNight = {
+      night: g.night,
+      dateLabel: fmtMD(startTs) + ' · ' + weekdayCn(startTs),
+      windowText: nightWindowText(g.night),
+      count: asc.length,
+      list: list
+    }
+    out.push(dn)
+  }
+  return out
+})
+
+const sections = computed((): Array<DisplaySection> => {
+  const ns = nights.value
+  const out: Array<DisplaySection> = []
+  for (let i = 0; i < ns.length; i++) {
+    const n = ns[i]
+    const p = n.night.split('-').map((s: string): number => parseInt(s))
+    const label = p[0].toString() + ' 年 ' + p[1].toString() + ' 月'
+    let target: DisplaySection | null = null
+    for (let j = 0; j < out.length; j++) {
+      if (out[j].label == label) {
+        target = out[j]
+        break
+      }
+    }
+    if (target == null) {
+      const list: Array<DisplayNight> = []
+      list.push(n)
+      const sec: DisplaySection = { label: label, nights: list }
+      out.push(sec)
+    } else {
+      target.nights.push(n)
+    }
+  }
+  return out
+})
+
+const avgText = computed((): string => {
+  const groups = groupByNight(records.value)
+  const inNight = isNightTime(nowTs.value)
+  const current = latestNightKey(nowTs.value)
+  const completed: Array<NightGroup> = []
+  for (let i = 0; i < groups.length; i++) {
+    if (inNight && groups[i].night == current) {
+      continue
+    }
+    completed.push(groups[i])
+  }
+  if (completed.length == 0) {
+    return '暂无完整数据'
+  }
+  const n = completed.length > 7 ? 7 : completed.length
+  let sum = 0
+  for (let i = 0; i < n; i++) {
+    sum += completed[i].list.length
+  }
+  return '近 7 天平均 ' + ((sum * 1.0) / n).toFixed(1) + ' 次/晚'
+})
+
+const monthText = computed((): string => {
+  const d = new Date(nowTs.value)
+  let count = 0
+  for (let i = 0; i < records.value.length; i++) {
+    const rd = new Date(records.value[i].ts)
+    if (rd.getFullYear() == d.getFullYear() && rd.getMonth() == d.getMonth()) {
+      count++
+    }
+  }
+  return '本月合计 ' + count.toString() + ' 次'
+})
+
+// 首位高亮胶囊：夜间=进行中的一夜（"今晚已醒"），白天=刚结束的昨晚（"昨晚醒"）
+const nightChipText = computed((): string => {
+  const key = latestNightKey(nowTs.value)
+  let count = 0
+  for (let i = 0; i < records.value.length; i++) {
+    if (nightDate(records.value[i].ts) == key) {
+      count++
+    }
+  }
+  return (isNightTime(nowTs.value) ? '今晚已醒 ' : '昨晚醒 ') + count.toString() + ' 次'
+})
+
+onShow(() => {
+  records.value = loadAllRecords()
+  nowTs.value = Date.now()
+  if (expanded.value.length == 0 && records.value.length > 0) {
+    expanded.value.push(nightDate(records.value[records.value.length - 1].ts))
+  }
+})
+
+function doDelete(id: string, ts: number) {
+  deleteRecord(id, ts)
+  const idx = records.value.findIndex((r: WakeRecord): boolean => r.id == id)
+  if (idx >= 0) {
+    records.value.splice(idx, 1)
+  }
+}
+
+function confirmDelete(id: string, ts: number) {
+  uni.showModal({
+    title: '删除记录',
+    content: '删除 ' + fmtHM(ts) + ' 这条记录？',
+    confirmText: '删除',
+    success: (res) => {
+      if (res.confirm) {
+        doDelete(id, ts)
+      }
+    }
+  })
+}
+</script>
+
+<style>
+.page {
+  flex: 1;
+  background-color: #101226;
+}
+.body {
+  flex: 1;
+}
+.chips {
+  flex-direction: row;
+  padding: 20rpx 30rpx 6rpx;
+}
+.chip {
+  background-color: #22264c;
+  border-radius: 999rpx;
+  padding: 10rpx 24rpx;
+  margin-right: 16rpx;
+}
+.chip-text {
+  font-size: 22rpx;
+  color: #f0f1fb;
+}
+.chip-hl {
+  background-color: #ffc84a;
+}
+.chip-text-hl {
+  font-size: 22rpx;
+  color: #3f2d04;
+  font-weight: bold;
+}
+.section {
+  padding: 0 30rpx;
+}
+.month-seg {
+  padding: 30rpx 6rpx 14rpx;
+}
+.month-text {
+  font-size: 22rpx;
+  color: #9094bd;
+  font-weight: bold;
+}
+.card {
+  background-color: #181b36;
+  border-radius: 24rpx;
+  margin-bottom: 16rpx;
+  overflow: hidden;
+  border: 1rpx solid rgba(255, 255, 255, 0.08);
+}
+.card-head {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 28rpx 30rpx;
+}
+.card-head-press {
+  background-color: #22264c;
+}
+.card-date {
+  font-size: 30rpx;
+  font-weight: bold;
+  color: #f0f1fb;
+}
+.card-cnt {
+  flex-direction: row;
+  align-items: center;
+}
+.card-cnt-text {
+  font-size: 26rpx;
+  color: #ffc84a;
+  font-weight: bold;
+}
+.card-arrow {
+  font-size: 24rpx;
+  color: #9094bd;
+  margin-left: 10rpx;
+}
+.card-body {
+  padding: 0 18rpx 18rpx;
+}
+.card-window {
+  font-size: 20rpx;
+  color: #9094bd;
+  margin: 6rpx 12rpx 14rpx;
+}
+.wake-item {
+  flex-direction: row;
+  align-items: center;
+  background-color: #22264c;
+  border-radius: 18rpx;
+  padding: 20rpx 22rpx;
+  margin-bottom: 12rpx;
+}
+.wake-time {
+  font-size: 30rpx;
+  font-weight: bold;
+  color: #f0f1fb;
+}
+.wake-gap {
+  flex: 1;
+  text-align: right;
+  font-size: 22rpx;
+  color: #9094bd;
+  margin-right: 16rpx;
+}
+.wake-del {
+  width: 52rpx;
+  height: 52rpx;
+  border-radius: 26rpx;
+  align-items: center;
+  justify-content: center;
+}
+.wake-del-press {
+  background-color: #3a3f7a;
+}
+.wake-del-text {
+  font-size: 34rpx;
+  color: #9094bd;
+}
+.empty {
+  align-items: center;
+  padding: 120rpx 0;
+}
+.empty-main {
+  font-size: 30rpx;
+  color: #9094bd;
+}
+.empty-sub {
+  font-size: 24rpx;
+  color: #6a6e96;
+  margin-top: 14rpx;
+}
+</style>

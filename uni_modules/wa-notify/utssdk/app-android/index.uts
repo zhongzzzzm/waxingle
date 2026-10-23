@@ -1,0 +1,54 @@
+// 每晨通知插件（app-android）：开启/关闭每日 09:00 本地通知，写入昨夜摘要。
+// 实现说明见 hybrid.kt；接收器在 AndroidManifest.xml 中静态声明，进程被杀后仍可被系统拉起。
+
+import { UTSAndroid } from "io.dcloud.uts"
+
+// 开启：每天 09:00 ±10 分钟通知昨晚醒来次数（幂等，重复调用会覆盖旧闹钟）
+export function enable(): boolean {
+  const ctx = UTSAndroid.getAppContext()
+  if (ctx == null) {
+    return false
+  }
+  WaNotifyReceiver.setEnabled(ctx, true)
+  WaNotifyReceiver.scheduleNext(ctx)
+  return true
+}
+
+// 关闭：取消闹钟并清除开启标记
+export function disable(): boolean {
+  const ctx = UTSAndroid.getAppContext()
+  if (ctx == null) {
+    return false
+  }
+  WaNotifyReceiver.setEnabled(ctx, false)
+  WaNotifyReceiver.cancel(ctx)
+  return true
+}
+
+export function isEnabled(): boolean {
+  const ctx = UTSAndroid.getAppContext()
+  if (ctx == null) {
+    return false
+  }
+  return WaNotifyReceiver.isEnabled(ctx)
+}
+
+// 上报摘要：key = 最近一夜的 nightDate（yyyy-MM-dd），count = 该夜醒来次数
+export function setSummary(nightKey: string, count: number) {
+  const ctx = UTSAndroid.getAppContext()
+  if (ctx == null) {
+    return
+  }
+  WaNotifyReceiver.setSummary(ctx, nightKey, count)
+}
+
+// Android 13+ 通知运行时权限；已授权则不弹
+export function requestPermission() {
+  const act = UTSAndroid.getUniActivity()
+  if (act == null) {
+    return
+  }
+  UTSAndroid.requestSystemPermission(act, ["android.permission.POST_NOTIFICATIONS"], (allGranted: boolean, grantedList: UTSArray<string>) => {
+  }, (doNotAskAgain: boolean, deniedList: UTSArray<string>) => {
+  })
+}

@@ -1,0 +1,21 @@
+<script setup lang="uts">
+import { onLaunch } from '@dcloudio/uni-app'
+
+// #ifdef APP-ANDROID
+import { enable, isEnabled } from '@/uni_modules/wa-notify'
+// #endif
+
+onLaunch((_options: OnLaunchOptions) => {
+  console.log('娃醒了 onLaunch')
+  // 自愈：用户强杀 App 会清掉闹钟，启动时按已保存的开关状态重新注册
+  // #ifdef APP-ANDROID
+  if (isEnabled()) {
+    enable()
+  }
+  // #endif
+})
+</script>
+
+<style>
+/* 全局样式：本项目为固定深色主题（深夜核心场景优先） */
+</style>

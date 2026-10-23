@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: 静态检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验 JSON 文件
+        run: |
+          find . -name '*.json' -not -path './unpackage/*' -print0 \
+            | xargs -0 -n1 python3 -m json.tool > /dev/null
+
+      - name: Python 脚本语法检查
+        run: python3 -m py_compile scripts/gen_tabbar_icons.py
+
+      - name: 检查 tab 图标与生成脚本一致
+        run: python3 scripts/gen_tabbar_icons.py --check
+
+      - name: markdownlint 文档检查
+        run: npx -y markdownlint-cli "**/*.md"

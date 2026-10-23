@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 创建 GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验 tag 与 manifest.json 版本一致
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          MANIFEST_VERSION=$(python3 -c "import json; print(json.load(open('manifest.json'))['versionName'])")
+          if [ "$TAG_VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "::error tag ${GITHUB_REF_NAME} 与 manifest.json versionName=${MANIFEST_VERSION} 不一致，请修正后重新打 tag"
+            exit 1
+          fi
+
+      - name: 生成发布说明
+        run: |
+          {
+            echo '## 安装'
+            echo '- Android：待维护者上传云打包 APK 后，从本页 Assets 下载。'
+            echo '- 本应用不联网、不收集任何数据，所有记录仅保存在手机本地。'
+            echo
+            echo '## 变更'
+            echo "完整变更见 [CHANGELOG.md](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md)。"
+          } > release_notes.md
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release_notes.md
+          generate_release_notes: true

@@ -1,0 +1,29 @@
+{
+  "id": "wa-notify",
+  "displayName": "娃醒了每晨通知",
+  "version": "1.0.0",
+  "description": "每天早上9点通过本地通知报告昨晚醒来次数",
+  "keywords": [
+    "通知",
+    "本地通知",
+    "AlarmManager"
+  ],
+  "uni_modules": {
+    "dependencies": [],
+    "platforms": {
+      "cloud": {
+        "tcb": "n",
+        "aliyun": "n",
+        "alipay": "n"
+      },
+      "client": {
+        "Vue": ["vue3"],
+        "App": {
+          "app-android": {
+            "minVersion": "21"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,143 @@
+// 本地存储：按月分桶（wa_records_YYYYMM）+ 月份索引（wa_months）。
+// 数据结构：JSON 字符串数组 [{ id, ts }]，无服务端、无数据库。
+
+import { nightDate } from './time.uts'
+
+export type WakeRecord = {
+  id: string,
+  ts: number
+}
+
+export type NightGroup = {
+  night: string,
+  list: Array<WakeRecord>
+}
+
+const MONTHS_KEY = 'wa_months'
+
+function monthOfNight(night: string): string {
+  return 'wa_records_' + night.substring(0, 7).replace('-', '')
+}
+
+function loadMonths(): Array<string> {
+  const raw = uni.getStorageSync(MONTHS_KEY)
+  if (raw == null) {
+    return []
+  }
+  const s = raw as string
+  if (s.length == 0) {
+    return []
+  }
+  try {
+    const arr = JSON.parse<Array<string>>(s)
+    if (arr == null) {
+      return []
+    }
+    return arr
+  } catch (e) {
+    return []
+  }
+}
+
+function saveMonths(months: Array<string>) {
+  uni.setStorageSync(MONTHS_KEY, JSON.stringify(months))
+}
+
+function ensureMonth(night: string) {
+  const mk = monthOfNight(night)
+  const months = loadMonths()
+  if (months.indexOf(mk) < 0) {
+    months.push(mk)
+    saveMonths(months)
+  }
+}
+
+function loadMonthRecords(key: string): Array<WakeRecord> {
+  const raw = uni.getStorageSync(key)
+  if (raw == null) {
+    return []
+  }
+  const s = raw as string
+  if (s.length == 0) {
+    return []
+  }
+  try {
+    const arr = JSON.parse<Array<WakeRecord>>(s)
+    if (arr == null) {
+      return []
+    }
+    return arr
+  } catch (e) {
+    return []
+  }
+}
+
+function saveMonthRecords(key: string, list: Array<WakeRecord>) {
+  uni.setStorageSync(key, JSON.stringify(list))
+}
+
+// 全部记录，按时间升序
+export function loadAllRecords(): Array<WakeRecord> {
+  const months = loadMonths()
+  const all: Array<WakeRecord> = []
+  for (let i = 0; i < months.length; i++) {
+    const list = loadMonthRecords(months[i])
+    for (let j = 0; j < list.length; j++) {
+      all.push(list[j])
+    }
+  }
+  all.sort((a: WakeRecord, b: WakeRecord): number => a.ts - b.ts)
+  return all
+}
+
+export function addRecord(ts: number): WakeRecord {
+  const night = nightDate(ts)
+  const key = monthOfNight(night)
+  const list = loadMonthRecords(key)
+  const rec: WakeRecord = { id: 'r' + ts.toString(), ts: ts }
+  list.push(rec)
+  saveMonthRecords(key, list)
+  ensureMonth(night)
+  return rec
+}
+
+export function deleteRecord(id: string, ts: number) {
+  const key = monthOfNight(nightDate(ts))
+  const list = loadMonthRecords(key)
+  const idx = list.findIndex((r: WakeRecord): boolean => r.id == id)
+  if (idx >= 0) {
+    list.splice(idx, 1)
+    saveMonthRecords(key, list)
+  }
+}
+
+function nightNum(night: string): number {
+  const p = night.split('-').map((s: string): number => parseInt(s))
+  return p[0] * 10000 + p[1] * 100 + p[2]
+}
+
+// 按夜分组（倒序：最新的一夜在前），组内按时间升序
+export function groupByNight(all: Array<WakeRecord>): Array<NightGroup> {
+  const groups: Array<NightGroup> = []
+  for (let i = 0; i < all.length; i++) {
+    const r = all[i]
+    const n = nightDate(r.ts)
+    let found = -1
+    for (let j = 0; j < groups.length; j++) {
+      if (groups[j].night == n) {
+        found = j
+        break
+      }
+    }
+    if (found < 0) {
+      const list: Array<WakeRecord> = []
+      list.push(r)
+      const g: NightGroup = { night: n, list: list }
+      groups.push(g)
+    } else {
+      groups[found].list.push(r)
+    }
+  }
+  groups.sort((a: NightGroup, b: NightGroup): number => nightNum(b.night) - nightNum(a.night))
+  return groups
+}

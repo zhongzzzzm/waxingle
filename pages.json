@@ -1,0 +1,46 @@
+{
+  "pages": [
+    {
+      "path": "pages/record/record",
+      "style": {
+        "navigationBarTitleText": "娃醒了",
+        "navigationBarBackgroundColor": "#101226",
+        "navigationBarTextStyle": "white"
+      }
+    },
+    {
+      "path": "pages/history/history",
+      "style": {
+        "navigationBarTitleText": "历史",
+        "navigationBarBackgroundColor": "#101226",
+        "navigationBarTextStyle": "white"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "white",
+    "navigationBarTitleText": "娃醒了",
+    "navigationBarBackgroundColor": "#101226",
+    "backgroundColor": "#101226"
+  },
+  "tabBar": {
+    "color": "#8f8a7c",
+    "selectedColor": "#ffc84a",
+    "backgroundColor": "#181b36",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/record/record",
+        "text": "记录",
+        "iconPath": "static/tabbar/record.png",
+        "selectedIconPath": "static/tabbar/record-active.png"
+      },
+      {
+        "pagePath": "pages/history/history",
+        "text": "历史",
+        "iconPath": "static/tabbar/history.png",
+        "selectedIconPath": "static/tabbar/history-active.png"
+      }
+    ]
+  }
+}

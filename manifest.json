@@ -1,0 +1,35 @@
+{
+	"name": "娃醒了",
+	"appid": "__UNI__F180CAB",
+	"description": "一键记录宝宝晚上醒来的次数",
+	"versionName": "1.0.0",
+	"versionCode": "100",
+	"uni-app-x": {},
+	"app": {},
+	"app-android": {
+		"distribute": {
+			"modules": {},
+			"icons": {
+				"hdpi": "static/appicon/android/72x72.png",
+				"xhdpi": "static/appicon/android/96x96.png",
+				"xxhdpi": "static/appicon/android/144x144.png",
+				"xxxhdpi": "static/appicon/android/192x192.png"
+			},
+			"splashScreens": {
+				"default": {}
+			}
+		}
+	},
+	"app-ios": {
+		"distribute": {
+			"modules": {},
+			"icons": {},
+			"splashScreens": {}
+		}
+	},
+	"web": {
+		"router": {
+			"mode": ""
+		}
+	}
+}
