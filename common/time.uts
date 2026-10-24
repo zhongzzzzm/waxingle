@@ -45,6 +45,12 @@ export function latestNightKey(ts: number): string {
   return nightDate(ts - 8 * 3600 * 1000)
 }
 
+// "昨晚"（最近一个已结束的夜）：任何时刻向前推 24h 再取夜归属，
+// 夜间=进行中那夜的前一夜，白天=刚结束的那夜
+export function lastCompletedNightKey(ts: number): string {
+  return nightDate(ts - 24 * 3600 * 1000)
+}
+
 // 某一夜的入睡时刻（night 当天 20:00），night 格式 yyyy-MM-dd
 export function nightStartTs(night: string): number {
   const p = night.split('-').map((s: string): number => parseInt(s))
@@ -56,17 +62,6 @@ export function nightWindowText(night: string): string {
   const start = nightStartTs(night)
   const end = start + 11 * 3600 * 1000
   return fmtMD(start) + ' 20:00 → ' + fmtMD(end) + ' 07:00'
-}
-
-export function sceneWord(ts: number): string {
-  const h = new Date(ts).getHours()
-  if (h < 5) return '凌晨'
-  if (h < 8) return '清晨'
-  if (h < 12) return '上午'
-  if (h < 14) return '中午'
-  if (h < 18) return '下午'
-  if (h < 20) return '傍晚'
-  return '夜里'
 }
 
 // 距上次的间隔文案：1h25m / 45m

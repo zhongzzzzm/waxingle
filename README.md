@@ -4,7 +4,7 @@
 >
 > One tap to log your baby's night wakings. Built with uni-app x (UTS / .uvue → native Android).
 
-[![CI](https://github.com/zhongziming/waxingle/actions/workflows/ci.yml/badge.svg)](https://github.com/zhongziming/waxingle/actions/workflows/ci.yml)
+[![CI](https://github.com/zhongzzzzm/waxingle/actions/workflows/ci.yml/badge.svg)](https://github.com/zhongzzzzm/waxingle/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## 特性
@@ -22,7 +22,7 @@
 
 ## 安装
 
-前往 [Releases](https://github.com/zhongziming/waxingle/releases) 页下载维护者云打包的 APK（Android）。如暂无所需版本，可按下节从源码自行编译。
+前往 [Releases](https://github.com/zhongzzzzm/waxingle/releases) 页下载维护者云打包的 APK（Android）。如暂无所需版本，可按下节从源码自行编译。
 
 ## 从源码运行
 

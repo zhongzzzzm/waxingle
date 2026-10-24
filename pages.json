@@ -15,6 +15,14 @@
         "navigationBarBackgroundColor": "#101226",
         "navigationBarTextStyle": "white"
       }
+    },
+    {
+      "path": "pages/settings/settings",
+      "style": {
+        "navigationBarTitleText": "设置",
+        "navigationBarBackgroundColor": "#101226",
+        "navigationBarTextStyle": "white"
+      }
     }
   ],
   "globalStyle": {
@@ -28,6 +36,10 @@
     "selectedColor": "#ffc84a",
     "backgroundColor": "#181b36",
     "borderStyle": "black",
+    "fontSize": "12px",
+    "iconWidth": "28px",
+    "height": "56px",
+    "spacing": "4px",
     "list": [
       {
         "pagePath": "pages/record/record",

@@ -1,0 +1,146 @@
+<template>
+  <view class="page">
+    <scroll-view class="body" :scroll-y="true">
+      <view class="group-seg">
+        <text class="group-title">通知</text>
+      </view>
+      <view class="group-card">
+        <view class="row">
+          <view class="row-texts">
+            <text class="row-name">每晨报告</text>
+            <text class="row-desc">每天早上 9 点通知昨晚次数</text>
+          </view>
+          <switch :checked="notifyOn" color="#ffc84a" @change="onNotifySwitch" />
+        </view>
+      </view>
+      <view class="note-seg">
+        <text class="note">从最近任务里强杀 App 后通知会暂停，下次打开自动恢复；如未收到通知，请检查系统通知权限。</text>
+      </view>
+      <view class="group-seg">
+        <text class="group-title">关于</text>
+      </view>
+      <view class="group-card">
+        <view class="row">
+          <view class="row-texts">
+            <text class="row-name">娃醒了是什么</text>
+            <text class="row-desc">半夜点一下，早上看结果——极简记录宝宝夜里醒来的次数。</text>
+          </view>
+        </view>
+        <view class="row row-div">
+          <view class="row-texts">
+            <text class="row-name">怎么算「一晚」</text>
+            <text class="row-desc">一晚 = 前日 20:00 → 次日 07:00；凌晨 0–7 点的记录算前一晚。白天误点可去历史页删除。</text>
+          </view>
+        </view>
+        <view class="row row-div">
+          <view class="row-texts">
+            <text class="row-name">数据与隐私</text>
+            <text class="row-desc">所有记录只存在手机本地，无网络、无账号、不上传。</text>
+          </view>
+        </view>
+        <view class="row row-div">
+          <view class="row-texts">
+            <text class="row-name">开源</text>
+            <text class="row-desc">github.com/zhongzzzzm/waxingle（MIT）</text>
+          </view>
+        </view>
+        <view class="row row-div row-between">
+          <text class="row-name">版本</text>
+          <text class="row-val">v1.1.0</text>
+        </view>
+      </view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { ref } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
+
+// #ifdef APP-ANDROID
+import { enable, disable, isEnabled, requestPermission } from '@/uni_modules/wa-notify'
+// #endif
+
+const notifyOn = ref<boolean>(false)
+
+onShow(() => {
+  // #ifdef APP-ANDROID
+  notifyOn.value = isEnabled()
+  // #endif
+})
+
+// #ifdef APP-ANDROID
+function onNotifySwitch(e: SwitchChangeEvent) {
+  if (e.detail.value) {
+    requestPermission()
+    enable()
+    notifyOn.value = true
+  } else {
+    disable()
+    notifyOn.value = false
+  }
+}
+// #endif
+</script>
+
+<style>
+.page {
+  flex: 1;
+  background-color: #101226;
+}
+.body {
+  flex: 1;
+}
+.group-seg {
+  padding: 36rpx 36rpx 16rpx;
+}
+.group-title {
+  font-size: 24rpx;
+  color: #9094bd;
+  font-weight: bold;
+}
+.group-card {
+  margin: 0 30rpx;
+  background-color: #181b36;
+  border-radius: 24rpx;
+  border: 1rpx solid rgba(255, 255, 255, 0.08);
+}
+.row {
+  flex-direction: row;
+  align-items: center;
+  padding: 28rpx 30rpx;
+}
+.row-div {
+  border-top: 1rpx solid rgba(255, 255, 255, 0.06);
+}
+.row-between {
+  justify-content: space-between;
+}
+.row-texts {
+  flex: 1;
+  flex-direction: column;
+  margin-right: 20rpx;
+}
+.row-name {
+  font-size: 30rpx;
+  color: #f0f1fb;
+}
+.row-desc {
+  font-size: 26rpx;
+  color: #9094bd;
+  margin-top: 8rpx;
+  line-height: 40rpx;
+}
+.row-val {
+  font-size: 26rpx;
+  color: #9094bd;
+}
+.note-seg {
+  padding: 20rpx 36rpx 0;
+}
+.note {
+  font-size: 24rpx;
+  color: #6a6e96;
+  line-height: 38rpx;
+}
+</style>

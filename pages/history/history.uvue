@@ -1,15 +1,17 @@
 <template>
   <view class="page">
     <scroll-view class="body" :scroll-y="true">
+      <view class="hist-top">
+        <view class="gear" hover-class="gear-press" @click="openSettings">
+          <text class="gear-text">⚙</text>
+        </view>
+      </view>
       <view class="chips">
         <view class="chip chip-hl">
-          <text class="chip-text-hl">{{ nightChipText }}</text>
+          <text class="chip-text-hl">{{ lastNightText }}</text>
         </view>
         <view class="chip">
-          <text class="chip-text">{{ avgText }}</text>
-        </view>
-        <view class="chip">
-          <text class="chip-text">{{ monthText }}</text>
+          <text class="chip-text">{{ weekText }}</text>
         </view>
       </view>
       <view v-if="sections.length == 0" class="empty">
@@ -48,8 +50,8 @@
 import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { loadAllRecords, deleteRecord, groupByNight } from '@/common/store.uts'
-import { WakeRecord, NightGroup } from '@/common/store.uts'
-import { fmtHM, fmtMD, weekdayCn, nightDate, nightStartTs, nightWindowText, gapText, latestNightKey, isNightTime } from '@/common/time.uts'
+import { WakeRecord } from '@/common/store.uts'
+import { fmtHM, fmtMD, weekdayCn, nightDate, nightStartTs, nightWindowText, gapText, lastCompletedNightKey } from '@/common/time.uts'
 
 type DisplayWake = {
   id: string,
@@ -86,6 +88,10 @@ function toggle(night: string) {
   } else {
     expanded.value.push(night)
   }
+}
+
+function openSettings() {
+  uni.navigateTo({ url: '/pages/settings/settings' })
 }
 
 const nights = computed((): Array<DisplayNight> => {
@@ -139,50 +145,33 @@ const sections = computed((): Array<DisplaySection> => {
   return out
 })
 
-const avgText = computed((): string => {
-  const groups = groupByNight(records.value)
-  const inNight = isNightTime(nowTs.value)
-  const current = latestNightKey(nowTs.value)
-  const completed: Array<NightGroup> = []
-  for (let i = 0; i < groups.length; i++) {
-    if (inNight && groups[i].night == current) {
-      continue
-    }
-    completed.push(groups[i])
-  }
-  if (completed.length == 0) {
-    return '暂无完整数据'
-  }
-  const n = completed.length > 7 ? 7 : completed.length
-  let sum = 0
-  for (let i = 0; i < n; i++) {
-    sum += completed[i].list.length
-  }
-  return '近 7 天平均 ' + ((sum * 1.0) / n).toFixed(1) + ' 次/晚'
-})
-
-const monthText = computed((): string => {
-  const d = new Date(nowTs.value)
-  let count = 0
-  for (let i = 0; i < records.value.length; i++) {
-    const rd = new Date(records.value[i].ts)
-    if (rd.getFullYear() == d.getFullYear() && rd.getMonth() == d.getMonth()) {
-      count++
-    }
-  }
-  return '本月合计 ' + count.toString() + ' 次'
-})
-
-// 首位高亮胶囊：夜间=进行中的一夜（"今晚已醒"），白天=刚结束的昨晚（"昨晚醒"）
-const nightChipText = computed((): string => {
-  const key = latestNightKey(nowTs.value)
+// 首位高亮胶囊：昨晚（最近一个已结束的夜）；"今晚"进行中的统计只在记录页
+const lastNightText = computed((): string => {
+  const key = lastCompletedNightKey(nowTs.value)
   let count = 0
   for (let i = 0; i < records.value.length; i++) {
     if (nightDate(records.value[i].ts) == key) {
       count++
     }
   }
-  return (isNightTime(nowTs.value) ? '今晚已醒 ' : '昨晚醒 ') + count.toString() + ' 次'
+  return '昨晚醒 ' + count.toString() + ' 次'
+})
+
+// 近 7 天合计：最近 7 个已结束夜（含 0 次的夜）的记录总数，
+// 按时间窗口 [7 天前那夜 20:00, 昨夜次日 07:00) 统计，进行中的一夜与白天误点不计入
+const weekText = computed((): string => {
+  const endKey = lastCompletedNightKey(nowTs.value)
+  const startKey = nightDate(nowTs.value - 7 * 24 * 3600 * 1000)
+  const from = nightStartTs(startKey)
+  const to = nightStartTs(endKey) + 11 * 3600 * 1000
+  let count = 0
+  for (let i = 0; i < records.value.length; i++) {
+    const ts = records.value[i].ts
+    if (ts >= from && ts < to) {
+      count++
+    }
+  }
+  return '近 7 天合计 ' + count.toString() + ' 次'
 })
 
 onShow(() => {
@@ -223,25 +212,46 @@ function confirmDelete(id: string, ts: number) {
 .body {
   flex: 1;
 }
+.hist-top {
+  flex-direction: row;
+  justify-content: flex-end;
+  padding: 12rpx 24rpx 0;
+}
+.gear {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 36rpx;
+  align-items: center;
+  justify-content: center;
+}
+.gear-press {
+  background-color: #22264c;
+}
+.gear-text {
+  font-size: 40rpx;
+  color: #9094bd;
+}
 .chips {
   flex-direction: row;
-  padding: 20rpx 30rpx 6rpx;
+  flex-wrap: wrap;
+  padding: 16rpx 30rpx 6rpx;
 }
 .chip {
   background-color: #22264c;
   border-radius: 999rpx;
-  padding: 10rpx 24rpx;
+  padding: 12rpx 26rpx;
   margin-right: 16rpx;
+  margin-bottom: 10rpx;
 }
 .chip-text {
-  font-size: 22rpx;
+  font-size: 26rpx;
   color: #f0f1fb;
 }
 .chip-hl {
   background-color: #ffc84a;
 }
 .chip-text-hl {
-  font-size: 22rpx;
+  font-size: 26rpx;
   color: #3f2d04;
   font-weight: bold;
 }
@@ -249,10 +259,10 @@ function confirmDelete(id: string, ts: number) {
   padding: 0 30rpx;
 }
 .month-seg {
-  padding: 30rpx 6rpx 14rpx;
+  padding: 32rpx 6rpx 14rpx;
 }
 .month-text {
-  font-size: 22rpx;
+  font-size: 24rpx;
   color: #9094bd;
   font-weight: bold;
 }
@@ -267,13 +277,13 @@ function confirmDelete(id: string, ts: number) {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  padding: 28rpx 30rpx;
+  padding: 30rpx 32rpx;
 }
 .card-head-press {
   background-color: #22264c;
 }
 .card-date {
-  font-size: 30rpx;
+  font-size: 32rpx;
   font-weight: bold;
   color: #f0f1fb;
 }
@@ -282,12 +292,12 @@ function confirmDelete(id: string, ts: number) {
   align-items: center;
 }
 .card-cnt-text {
-  font-size: 26rpx;
+  font-size: 28rpx;
   color: #ffc84a;
   font-weight: bold;
 }
 .card-arrow {
-  font-size: 24rpx;
+  font-size: 26rpx;
   color: #9094bd;
   margin-left: 10rpx;
 }
@@ -295,34 +305,34 @@ function confirmDelete(id: string, ts: number) {
   padding: 0 18rpx 18rpx;
 }
 .card-window {
-  font-size: 20rpx;
+  font-size: 24rpx;
   color: #9094bd;
-  margin: 6rpx 12rpx 14rpx;
+  margin: 6rpx 12rpx 16rpx;
 }
 .wake-item {
   flex-direction: row;
   align-items: center;
   background-color: #22264c;
   border-radius: 18rpx;
-  padding: 20rpx 22rpx;
+  padding: 24rpx 26rpx;
   margin-bottom: 12rpx;
 }
 .wake-time {
-  font-size: 30rpx;
+  font-size: 32rpx;
   font-weight: bold;
   color: #f0f1fb;
 }
 .wake-gap {
   flex: 1;
   text-align: right;
-  font-size: 22rpx;
+  font-size: 26rpx;
   color: #9094bd;
   margin-right: 16rpx;
 }
 .wake-del {
-  width: 52rpx;
-  height: 52rpx;
-  border-radius: 26rpx;
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 32rpx;
   align-items: center;
   justify-content: center;
 }
@@ -330,7 +340,7 @@ function confirmDelete(id: string, ts: number) {
   background-color: #3a3f7a;
 }
 .wake-del-text {
-  font-size: 34rpx;
+  font-size: 36rpx;
   color: #9094bd;
 }
 .empty {
@@ -338,11 +348,11 @@ function confirmDelete(id: string, ts: number) {
   padding: 120rpx 0;
 }
 .empty-main {
-  font-size: 30rpx;
+  font-size: 32rpx;
   color: #9094bd;
 }
 .empty-sub {
-  font-size: 24rpx;
+  font-size: 28rpx;
   color: #6a6e96;
   margin-top: 14rpx;
 }
