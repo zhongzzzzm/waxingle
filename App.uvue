@@ -1,5 +1,6 @@
 <script setup lang="uts">
 import { onLaunch } from '@dcloudio/uni-app'
+import { ensureSchema } from '@/common/store.uts'
 
 // #ifdef APP-ANDROID
 import { enable, isEnabled } from '@/uni_modules/wa-notify'
@@ -7,6 +8,8 @@ import { enable, isEnabled } from '@/uni_modules/wa-notify'
 
 onLaunch((_options: OnLaunchOptions) => {
   console.log('娃醒了 onLaunch')
+  // v1 → v2 数据迁移（幂等，旧 key 保留）
+  ensureSchema()
   // 自愈：用户强杀 App 会清掉闹钟，启动时按已保存的开关状态重新注册
   // #ifdef APP-ANDROID
   if (isEnabled()) {

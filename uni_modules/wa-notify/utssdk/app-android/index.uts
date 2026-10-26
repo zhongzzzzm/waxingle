@@ -33,13 +33,14 @@ export function isEnabled(): boolean {
   return WaNotifyReceiver.isEnabled(ctx)
 }
 
-// 上报摘要：key = 最近一夜的 nightDate（yyyy-MM-dd），count = 该夜醒来次数
-export function setSummary(nightKey: string, count: number) {
+// 上报摘要：key = 最近一夜的 nightDate（yyyy-MM-dd），count = 该夜醒来次数，
+// spanText = 整夜时长文案（如 "9h55m"，未记入睡/起床时为空串）
+export function setSummary(nightKey: string, count: number, spanText: string) {
   const ctx = UTSAndroid.getAppContext()
   if (ctx == null) {
     return
   }
-  WaNotifyReceiver.setSummary(ctx, nightKey, count)
+  WaNotifyReceiver.setSummary(ctx, nightKey, count, spanText)
 }
 
 // Android 13+ 通知运行时权限；已授权则不弹

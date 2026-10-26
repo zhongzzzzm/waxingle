@@ -24,12 +24,21 @@ class WaNotifyReceiver : BroadcastReceiver() {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val nightKey = prefs.getString(KEY_NIGHT, "") ?: ""
         val count = prefs.getInt(KEY_COUNT, -1)
+        val span = prefs.getString(KEY_SPAN, "") ?: ""
         val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         val cal = Calendar.getInstance()
         cal.add(Calendar.DATE, -1)
         val yesterday = fmt.format(cal.time)
         val text = if (nightKey == yesterday && count >= 0) {
-            if (count > 0) "昨晚娃醒了 " + count + " 次 ☀️" else "昨晚一夜安睡，没有醒来 🌙"
+            if (count > 0) {
+                val sb = StringBuilder("昨晚娃醒了 ").append(count).append(" 次")
+                if (span.isNotEmpty()) {
+                    sb.append(" · 整夜 ").append(span)
+                }
+                sb.append(" ☀️").toString()
+            } else {
+                "昨晚一夜安睡，没有醒来 🌙"
+            }
         } else {
             "看看昨晚娃醒了几次 ☀️"
         }
@@ -43,6 +52,7 @@ class WaNotifyReceiver : BroadcastReceiver() {
         private const val PREFS_NAME = "wa_notify"
         private const val KEY_NIGHT = "nightKey"
         private const val KEY_COUNT = "count"
+        private const val KEY_SPAN = "span"
         private const val KEY_ENABLED = "enabled"
         private const val CHANNEL_ID = "wa_morning_report"
         private const val NOTIFY_ID = 1001
@@ -79,8 +89,9 @@ class WaNotifyReceiver : BroadcastReceiver() {
             return prefs(context).getBoolean(KEY_ENABLED, false)
         }
 
-        fun setSummary(context: Context, nightKey: String, count: Number) {
-            prefs(context).edit().putString(KEY_NIGHT, nightKey).putInt(KEY_COUNT, count.toInt()).apply()
+        fun setSummary(context: Context, nightKey: String, count: Number, spanText: String) {
+            prefs(context).edit().putString(KEY_NIGHT, nightKey).putInt(KEY_COUNT, count.toInt())
+                .putString(KEY_SPAN, spanText).apply()
         }
 
         private fun prefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

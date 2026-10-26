@@ -1,5 +1,7 @@
-// 本地存储：按月分桶（wa_records_YYYYMM）+ 月份索引（wa_months）。
-// 数据结构：JSON 字符串数组 [{ id, ts }]，无服务端、无数据库。
+// 本地存储：睡眠会话（一夜一对象）按月分桶。
+// 数据结构：JSON 数组 [{ id, night, bedtime, wakes: [{ id, ts }], wakeUp }]，
+// 桶 key wa_sessions_YYYYMM + 月份索引 wa_session_months + 版本标记 wa_schema=2。
+// v1 数据（wa_records_YYYYMM / wa_months）由 ensureSchema() 一次性迁移，旧 key 保留不删。
 
 import { nightDate } from './time.uts'
 
@@ -8,19 +10,32 @@ export type WakeRecord = {
   ts: number
 }
 
-export type NightGroup = {
-  night: string,
-  list: Array<WakeRecord>
+export type SleepSession = {
+  id: string,          // 's' + night
+  night: string,       // yyyy-MM-dd，夜归属键（= 入睡那天日期）
+  bedtime: number,     // 入睡时刻；0 = 未记录（夜里直接点"醒了"自动开夜）
+  wakes: Array<WakeRecord>,
+  wakeUp: number       // 彻底清醒时刻；0 = 进行中/未记录
 }
 
-const MONTHS_KEY = 'wa_months'
+// 撤销信息：撤销最近一次动作。action: 'asleep' | 'wake' | 'rise'
+export type UndoInfo = {
+  action: string,
+  night: string,
+  ts: number
+}
+
+const SCHEMA_KEY = 'wa_schema'
+const MONTHS_KEY = 'wa_session_months'
+const OLD_MONTHS_KEY = 'wa_months'
+
+let schemaChecked = false
 
 function monthOfNight(night: string): string {
-  return 'wa_records_' + night.substring(0, 7).replace('-', '')
+  return 'wa_sessions_' + night.substring(0, 7).replace('-', '')
 }
 
-function loadMonths(): Array<string> {
-  const raw = uni.getStorageSync(MONTHS_KEY)
+function parseStringArray(raw: any | null): Array<string> {
   if (raw == null) {
     return []
   }
@@ -39,21 +54,7 @@ function loadMonths(): Array<string> {
   }
 }
 
-function saveMonths(months: Array<string>) {
-  uni.setStorageSync(MONTHS_KEY, JSON.stringify(months))
-}
-
-function ensureMonth(night: string) {
-  const mk = monthOfNight(night)
-  const months = loadMonths()
-  if (months.indexOf(mk) < 0) {
-    months.push(mk)
-    saveMonths(months)
-  }
-}
-
-function loadMonthRecords(key: string): Array<WakeRecord> {
-  const raw = uni.getStorageSync(key)
+function parseRecords(raw: any | null): Array<WakeRecord> {
   if (raw == null) {
     return []
   }
@@ -72,43 +73,45 @@ function loadMonthRecords(key: string): Array<WakeRecord> {
   }
 }
 
-function saveMonthRecords(key: string, list: Array<WakeRecord>) {
-  uni.setStorageSync(key, JSON.stringify(list))
+function loadMonths(): Array<string> {
+  return parseStringArray(uni.getStorageSync(MONTHS_KEY))
 }
 
-// 全部记录，按时间升序
-export function loadAllRecords(): Array<WakeRecord> {
+function saveMonths(months: Array<string>) {
+  uni.setStorageSync(MONTHS_KEY, JSON.stringify(months))
+}
+
+function ensureMonth(night: string) {
+  const mk = monthOfNight(night)
   const months = loadMonths()
-  const all: Array<WakeRecord> = []
-  for (let i = 0; i < months.length; i++) {
-    const list = loadMonthRecords(months[i])
-    for (let j = 0; j < list.length; j++) {
-      all.push(list[j])
+  if (months.indexOf(mk) < 0) {
+    months.push(mk)
+    saveMonths(months)
+  }
+}
+
+function loadMonthSessions(key: string): Array<SleepSession> {
+  const raw = uni.getStorageSync(key)
+  if (raw == null) {
+    return []
+  }
+  const s = raw as string
+  if (s.length == 0) {
+    return []
+  }
+  try {
+    const arr = JSON.parse<Array<SleepSession>>(s)
+    if (arr == null) {
+      return []
     }
+    return arr
+  } catch (e) {
+    return []
   }
-  all.sort((a: WakeRecord, b: WakeRecord): number => a.ts - b.ts)
-  return all
 }
 
-export function addRecord(ts: number): WakeRecord {
-  const night = nightDate(ts)
-  const key = monthOfNight(night)
-  const list = loadMonthRecords(key)
-  const rec: WakeRecord = { id: 'r' + ts.toString(), ts: ts }
-  list.push(rec)
-  saveMonthRecords(key, list)
-  ensureMonth(night)
-  return rec
-}
-
-export function deleteRecord(id: string, ts: number) {
-  const key = monthOfNight(nightDate(ts))
-  const list = loadMonthRecords(key)
-  const idx = list.findIndex((r: WakeRecord): boolean => r.id == id)
-  if (idx >= 0) {
-    list.splice(idx, 1)
-    saveMonthRecords(key, list)
-  }
+function saveMonthSessions(key: string, list: Array<SleepSession>) {
+  uni.setStorageSync(key, JSON.stringify(list))
 }
 
 function nightNum(night: string): number {
@@ -116,28 +119,229 @@ function nightNum(night: string): number {
   return p[0] * 10000 + p[1] * 100 + p[2]
 }
 
-// 按夜分组（倒序：最新的一夜在前），组内按时间升序
-export function groupByNight(all: Array<WakeRecord>): Array<NightGroup> {
-  const groups: Array<NightGroup> = []
-  for (let i = 0; i < all.length; i++) {
-    const r = all[i]
-    const n = nightDate(r.ts)
-    let found = -1
-    for (let j = 0; j < groups.length; j++) {
-      if (groups[j].night == n) {
-        found = j
-        break
-      }
-    }
-    if (found < 0) {
-      const list: Array<WakeRecord> = []
-      list.push(r)
-      const g: NightGroup = { night: n, list: list }
-      groups.push(g)
-    } else {
-      groups[found].list.push(r)
+function findSession(night: string): SleepSession | null {
+  const key = monthOfNight(night)
+  const list = loadMonthSessions(key)
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].night == night) {
+      return list[i]
     }
   }
-  groups.sort((a: NightGroup, b: NightGroup): number => nightNum(b.night) - nightNum(a.night))
-  return groups
+  return null
+}
+
+// 按 night 覆盖写入（无则追加）并登记月份索引
+function upsertSession(session: SleepSession) {
+  const key = monthOfNight(session.night)
+  const list = loadMonthSessions(key)
+  let found = false
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].night == session.night) {
+      list[i] = session
+      found = true
+      break
+    }
+  }
+  if (!found) {
+    list.push(session)
+  }
+  saveMonthSessions(key, list)
+  ensureMonth(session.night)
+}
+
+function removeSession(night: string) {
+  const key = monthOfNight(night)
+  const list = loadMonthSessions(key)
+  const idx = list.findIndex((s: SleepSession): boolean => s.night == night)
+  if (idx >= 0) {
+    list.splice(idx, 1)
+    saveMonthSessions(key, list)
+  }
+}
+
+// v1 → v2 一次性迁移：旧醒点按夜分组合成会话（bedtime/wakeUp 均为 0）
+function migrateV1() {
+  const oldMonths = parseStringArray(uni.getStorageSync(OLD_MONTHS_KEY))
+  if (oldMonths.length == 0) {
+    return
+  }
+  const all: Array<WakeRecord> = []
+  for (let i = 0; i < oldMonths.length; i++) {
+    const list = parseRecords(uni.getStorageSync(oldMonths[i]))
+    for (let j = 0; j < list.length; j++) {
+      all.push(list[j])
+    }
+  }
+  all.sort((a: WakeRecord, b: WakeRecord): number => a.ts - b.ts)
+  for (let i = 0; i < all.length; i++) {
+    const night = nightDate(all[i].ts)
+    const exist = findSession(night)
+    let wakes: Array<WakeRecord> = []
+    if (exist != null) {
+      wakes = exist.wakes
+    }
+    wakes.push(all[i])
+    const session: SleepSession = {
+      id: 's' + night,
+      night: night,
+      bedtime: 0,
+      wakes: wakes,
+      wakeUp: 0
+    }
+    upsertSession(session)
+  }
+}
+
+// 幂等：首启迁移 v1 数据并写版本标记；之后立即返回
+export function ensureSchema() {
+  if (schemaChecked) {
+    return
+  }
+  schemaChecked = true
+  const raw = uni.getStorageSync(SCHEMA_KEY)
+  if (raw != null) {
+    const s = raw as string
+    if (s == '2') {
+      return
+    }
+  }
+  migrateV1()
+  uni.setStorageSync(SCHEMA_KEY, '2')
+}
+
+// 全部会话，按夜倒序（最新在前）
+export function loadAllSessions(): Array<SleepSession> {
+  ensureSchema()
+  const months = loadMonths()
+  const all: Array<SleepSession> = []
+  for (let i = 0; i < months.length; i++) {
+    const list = loadMonthSessions(months[i])
+    for (let j = 0; j < list.length; j++) {
+      all.push(list[j])
+    }
+  }
+  all.sort((a: SleepSession, b: SleepSession): number => nightNum(b.night) - nightNum(a.night))
+  return all
+}
+
+// 记入睡：开新夜。若该夜已有未结束会话只补 bedtime；已结束则不动（页面状态机保证不会走到）
+export function recordAsleep(now: number): SleepSession {
+  ensureSchema()
+  const night = nightDate(now)
+  const exist = findSession(night)
+  if (exist != null) {
+    if (exist.wakeUp == 0 && exist.bedtime == 0) {
+      exist.bedtime = now
+      upsertSession(exist)
+    }
+    return exist
+  }
+  const wakes: Array<WakeRecord> = []
+  const session: SleepSession = {
+    id: 's' + night,
+    night: night,
+    bedtime: now,
+    wakes: wakes,
+    wakeUp: 0
+  }
+  upsertSession(session)
+  return session
+}
+
+// 记醒：给进行中的夜追加一个醒点；该夜没开过则自动开夜（bedtime=0，兼容"打开就点"的老习惯）
+export function recordWake(now: number): SleepSession {
+  ensureSchema()
+  const night = nightDate(now)
+  let s = findSession(night)
+  if (s == null) {
+    const wakes: Array<WakeRecord> = []
+    const fresh: SleepSession = {
+      id: 's' + night,
+      night: night,
+      bedtime: 0,
+      wakes: wakes,
+      wakeUp: 0
+    }
+    s = fresh
+  }
+  const rec: WakeRecord = { id: 'w' + now.toString(), ts: now }
+  s.wakes.push(rec)
+  upsertSession(s)
+  return s
+}
+
+// 记起床：结束当前夜
+export function recordRise(now: number): SleepSession {
+  ensureSchema()
+  const night = nightDate(now)
+  let s = findSession(night)
+  if (s == null) {
+    const wakes: Array<WakeRecord> = []
+    const fresh: SleepSession = {
+      id: 's' + night,
+      night: night,
+      bedtime: 0,
+      wakes: wakes,
+      wakeUp: 0
+    }
+    s = fresh
+  }
+  s.wakeUp = now
+  upsertSession(s)
+  return s
+}
+
+// 重新打开已结束的夜（"起床"点早了、起床后又哄睡）
+export function reopenSession(night: string): SleepSession | null {
+  const s = findSession(night)
+  if (s == null) {
+    return null
+  }
+  s.wakeUp = 0
+  upsertSession(s)
+  return s
+}
+
+// 撤销最近一次动作；会话因此变空且无入睡时连带删除
+export function undoAction(info: UndoInfo) {
+  const s = findSession(info.night)
+  if (s == null) {
+    return
+  }
+  if (info.action == 'asleep') {
+    s.bedtime = 0
+    if (s.wakes.length == 0) {
+      removeSession(info.night)
+      return
+    }
+    upsertSession(s)
+    return
+  }
+  if (info.action == 'wake') {
+    const idx = s.wakes.findIndex((r: WakeRecord): boolean => r.ts == info.ts)
+    if (idx >= 0) {
+      s.wakes.splice(idx, 1)
+    }
+    if (s.wakes.length == 0 && s.bedtime == 0) {
+      removeSession(info.night)
+      return
+    }
+    upsertSession(s)
+    return
+  }
+  s.wakeUp = 0
+  upsertSession(s)
+}
+
+// 历史页删除单个醒点
+export function deleteWake(night: string, id: string) {
+  const s = findSession(night)
+  if (s == null) {
+    return
+  }
+  const idx = s.wakes.findIndex((r: WakeRecord): boolean => r.id == id)
+  if (idx >= 0) {
+    s.wakes.splice(idx, 1)
+    upsertSession(s)
+  }
 }

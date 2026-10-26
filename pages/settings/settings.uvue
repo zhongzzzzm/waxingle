@@ -8,7 +8,7 @@
         <view class="row">
           <view class="row-texts">
             <text class="row-name">每晨报告</text>
-            <text class="row-desc">每天早上 9 点通知昨晚次数</text>
+            <text class="row-desc">每天早上 9 点通知昨晚次数与整夜时长</text>
           </view>
           <switch :checked="notifyOn" color="#ffc84a" @change="onNotifySwitch" />
         </view>
@@ -23,13 +23,13 @@
         <view class="row">
           <view class="row-texts">
             <text class="row-name">娃醒了是什么</text>
-            <text class="row-desc">半夜点一下，早上看结果——极简记录宝宝夜里醒来的次数。</text>
+            <text class="row-desc">记宝宝几点入睡、夜里醒几次、早上几点起——半夜只点一下。</text>
           </view>
         </view>
         <view class="row row-div">
           <view class="row-texts">
             <text class="row-name">怎么算「一晚」</text>
-            <text class="row-desc">一晚 = 前日 20:00 → 次日 07:00；凌晨 0–7 点的记录算前一晚。白天误点可去历史页删除。</text>
+            <text class="row-desc">一晚从点「睡着了」开始，到点「起床」结束；凌晨 0–7 点自动算前一晚。忘了点「睡着了」也没关系，直接点「醒了」会自动开夜。</text>
           </view>
         </view>
         <view class="row row-div">
@@ -46,7 +46,7 @@
         </view>
         <view class="row row-div row-between">
           <text class="row-name">版本</text>
-          <text class="row-val">v1.1.0</text>
+          <text class="row-val">v2.0.0</text>
         </view>
       </view>
     </scroll-view>

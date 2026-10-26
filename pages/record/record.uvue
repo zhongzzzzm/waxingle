@@ -2,16 +2,31 @@
   <view class="page">
     <view class="center">
       <view class="stat">
-        <text class="stat-label">今晚已醒</text>
+        <text class="stat-label">{{ statLabel }}</text>
         <view class="stat-row">
-          <text class="stat-num">{{ tonightCount }}</text>
-          <text class="stat-unit">次</text>
+          <text :class="statDur ? 'stat-num stat-num-dur' : 'stat-num'">{{ statNum }}</text>
+          <text class="stat-unit">{{ statUnit }}</text>
         </view>
         <text class="stat-sub">{{ statSub }}</text>
       </view>
-      <view class="big-btn" hover-class="big-btn-press" @click="onAdd">
-        <text class="big-btn-main">醒了</text>
-        <text class="big-btn-sub">点一下 · 记一次</text>
+      <view v-if="barVisible" class="night-bar">
+        <view class="bar-track">
+          <view v-for="d in barDots" :key="d" class="bar-dot" :style="'left:' + d"></view>
+        </view>
+        <view class="bar-cap">
+          <text class="bar-cap-text">{{ barLeftText }}</text>
+          <text class="bar-cap-text">现在</text>
+        </view>
+      </view>
+      <view class="big-btn" :class="mainOff ? 'big-btn-off' : ''" :hover-class="mainOff ? 'none' : 'big-btn-press'" @click="onMain">
+        <text :class="mainOff ? 'big-btn-main-off' : 'big-btn-main'">{{ mainText }}</text>
+        <text :class="mainOff ? 'big-btn-sub-off' : 'big-btn-sub'">{{ mainSubText }}</text>
+      </view>
+      <view v-if="riseVisible" class="pill-btn" hover-class="pill-btn-press" @click="onRise">
+        <text class="pill-btn-text">起床</text>
+      </view>
+      <view v-else-if="reopenVisible" class="pill-btn" hover-class="pill-btn-press" @click="onReopen">
+        <text class="pill-btn-text">记错了？重新打开今晚</text>
       </view>
       <view v-if="undoVisible" class="undo-bar">
         <text class="undo-text">{{ undoText }}</text>
@@ -27,82 +42,217 @@
 <script setup lang="uts">
 import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
-import { loadAllRecords, addRecord, deleteRecord } from '@/common/store.uts'
-import { WakeRecord } from '@/common/store.uts'
-import { fmtHM, nightDate, isNightTime, latestNightKey } from '@/common/time.uts'
+import { loadAllSessions, recordAsleep, recordWake, recordRise, reopenSession, undoAction } from '@/common/store.uts'
+import { SleepSession, UndoInfo } from '@/common/store.uts'
+import { fmtHM, gapText, nightDate, isNightTime, latestNightKey, lastCompletedNightKey } from '@/common/time.uts'
 
 // #ifdef APP-ANDROID
 import { setSummary } from '@/uni_modules/wa-notify'
 // #endif
 
 const nowTs = ref<number>(Date.now())
-const records = ref<Array<WakeRecord>>([])
+const sessions = ref<Array<SleepSession>>([])
 
-// 记录页永远显示"今天这一夜"（凌晨 0–7 点因夜归属规则自动指向昨晚开始的那夜）
-const todayNight = computed((): string => {
-  return nightDate(nowTs.value)
+function sessionOf(night: string): SleepSession | null {
+  for (let i = 0; i < sessions.value.length; i++) {
+    if (sessions.value[i].night == night) {
+      return sessions.value[i]
+    }
+  }
+  return null
+}
+
+// 页面聚焦的这一夜：夜间=nightDate(now)（进行中或已结束），白天=最近结束的昨夜（展示总结）
+const tonight = computed((): SleepSession | null => {
+  if (isNightTime(nowTs.value)) {
+    return sessionOf(nightDate(nowTs.value))
+  }
+  return sessionOf(lastCompletedNightKey(nowTs.value))
+})
+
+// 状态机：idle（夜间未开夜）/ sleeping / done（夜间已结束）/ day（白天，只能看总结）
+const phase = computed((): string => {
+  if (!isNightTime(nowTs.value)) {
+    return 'day'
+  }
+  const t = tonight.value
+  if (t == null) {
+    return 'idle'
+  }
+  if (t.wakeUp > 0) {
+    return 'done'
+  }
+  return 'sleeping'
+})
+
+// done/day 且首尾齐全 → 大数字显示整夜时长（如 9h55m），否则显示次数
+const statDur = computed((): boolean => {
+  const t = tonight.value
+  return t != null && t.bedtime > 0 && t.wakeUp > 0 && (phase.value == 'done' || phase.value == 'day')
+})
+
+const statLabel = computed((): string => {
+  if (phase.value == 'done') {
+    return '今晚已结束'
+  }
+  if (phase.value == 'day') {
+    return statDur.value ? '昨晚' : '昨晚醒了'
+  }
+  return '今晚已醒'
+})
+
+const statNum = computed((): string => {
+  const t = tonight.value
+  if (statDur.value && t != null) {
+    return gapText(t.wakeUp - t.bedtime)
+  }
+  if (t != null) {
+    return t.wakes.length.toString()
+  }
+  return '0'
+})
+
+const statUnit = computed((): string => {
+  return statDur.value ? '整夜' : '次'
 })
 
 const statSub = computed((): string => {
-  return isNightTime(nowTs.value) ? '进行中 · 记到早上 7 点' : '今晚 8 点开始'
+  const t = tonight.value
+  if (phase.value == 'idle' || t == null) {
+    return '今晚 8 点开始 · 等娃睡着点下方'
+  }
+  if (phase.value == 'sleeping') {
+    const lastTs = t.wakes.length > 0 ? t.wakes[t.wakes.length - 1].ts : t.bedtime
+    if (t.bedtime > 0) {
+      return '入睡 ' + fmtHM(t.bedtime) + ' · 这一觉已 ' + gapText(nowTs.value - lastTs)
+    }
+    return '未记入睡 · 距上次醒 ' + gapText(nowTs.value - lastTs)
+  }
+  if (phase.value == 'done') {
+    const head = t.bedtime > 0 ? '入睡 ' + fmtHM(t.bedtime) + ' → ' : '未记入睡 → '
+    return head + '起床 ' + fmtHM(t.wakeUp) + ' · 醒 ' + t.wakes.length.toString() + ' 次'
+  }
+  // 白天
+  if (statDur.value) {
+    return '入睡 ' + fmtHM(t.bedtime) + ' → 起床 ' + fmtHM(t.wakeUp) + ' · 醒 ' + t.wakes.length.toString() + ' 次'
+  }
+  if (t.wakeUp > 0) {
+    return '未记入睡 · 起床 ' + fmtHM(t.wakeUp) + ' · 醒 ' + t.wakes.length.toString() + ' 次'
+  }
+  if (t.bedtime > 0) {
+    return '入睡 ' + fmtHM(t.bedtime) + ' · 未记起床 · 醒 ' + t.wakes.length.toString() + ' 次'
+  }
+  return '旧版数据 · 醒 ' + t.wakes.length.toString() + ' 次'
 })
 
-const tonightCount = computed((): number => {
-  const key = todayNight.value
-  let count = 0
-  for (let i = 0; i < records.value.length; i++) {
-    if (nightDate(records.value[i].ts) == key) {
-      count++
-    }
+const mainOff = computed((): boolean => {
+  return phase.value == 'day' || phase.value == 'done'
+})
+
+const mainText = computed((): string => {
+  if (phase.value == 'sleeping') {
+    return '醒了'
   }
-  return count
+  if (phase.value == 'idle') {
+    return '睡着了'
+  }
+  if (phase.value == 'done') {
+    return '今晚已结束'
+  }
+  return '还没到晚上'
+})
+
+const mainSubText = computed((): string => {
+  if (phase.value == 'sleeping') {
+    return '点一下 · 记一次'
+  }
+  if (phase.value == 'idle') {
+    return '娃闭眼睡下就点'
+  }
+  if (phase.value == 'done') {
+    return '起床后又睡？点下方继续记'
+  }
+  return '晚上 8 点开始记今晚'
+})
+
+const riseVisible = computed((): boolean => {
+  return phase.value == 'sleeping'
+})
+
+const reopenVisible = computed((): boolean => {
+  return phase.value == 'done'
+})
+
+// 进行中的夜间时间轴：蓝条 = 入睡起一直在睡，黄点 = 每次醒（bedtime 未记录时不显示）
+const barVisible = computed((): boolean => {
+  const t = tonight.value
+  return phase.value == 'sleeping' && t != null && t.bedtime > 0
+})
+
+const barDots = computed((): Array<string> => {
+  const out: Array<string> = []
+  const t = tonight.value
+  if (t == null || t.bedtime <= 0 || nowTs.value <= t.bedtime) {
+    return out
+  }
+  const span = nowTs.value - t.bedtime
+  for (let i = 0; i < t.wakes.length; i++) {
+    const pct = (t.wakes[i].ts - t.bedtime) * 100 / span
+    out.push(pct.toFixed(1) + '%')
+  }
+  return out
+})
+
+const barLeftText = computed((): string => {
+  const t = tonight.value
+  if (t == null) {
+    return ''
+  }
+  return '入睡 ' + fmtHM(t.bedtime)
 })
 
 const lastText = computed((): string => {
-  if (records.value.length == 0) {
+  const t = tonight.value
+  if (phase.value != 'sleeping' || t == null) {
     return ''
   }
-  return '上次记录 ' + fmtHM(records.value[records.value.length - 1].ts)
+  if (t.wakes.length > 0) {
+    return '上次醒了 ' + fmtHM(t.wakes[t.wakes.length - 1].ts)
+  }
+  if (t.bedtime > 0) {
+    return '入睡 ' + fmtHM(t.bedtime)
+  }
+  return ''
 })
 
-let lastClick = 0
-let undoId = ''
-let undoTs = 0
-let undoTimer = -1
-const undoVisible = ref<boolean>(false)
-const undoText = ref<string>('')
-
-// 上报摘要：最近一夜（key + 次数）写入通知插件，供次日 09:00 接收器读取
+// 上报摘要：最近一夜 key + 次数 + 整夜时长，供次日 09:00 接收器读取
 // #ifdef APP-ANDROID
 function updateNotifySummary() {
   const key = latestNightKey(nowTs.value)
   let count = 0
-  for (let i = 0; i < records.value.length; i++) {
-    if (nightDate(records.value[i].ts) == key) {
-      count++
+  let span = ''
+  const t = sessionOf(key)
+  if (t != null) {
+    count = t.wakes.length
+    if (t.bedtime > 0 && t.wakeUp > 0) {
+      span = gapText(t.wakeUp - t.bedtime)
     }
   }
-  setSummary(key, count)
+  setSummary(key, count, span)
 }
 // #endif
 
-onShow(() => {
-  records.value = loadAllRecords()
-  nowTs.value = Date.now()
-  // #ifdef APP-ANDROID
-  updateNotifySummary()
-  // #endif
-})
-
-function removeLocal(id: string) {
-  const idx = records.value.findIndex((r: WakeRecord): boolean => r.id == id)
-  if (idx >= 0) {
-    records.value.splice(idx, 1)
-  }
-}
+let lastClick = 0
+let undoTimer = -1
+let undoAct = ''
+let undoNight = ''
+let undoTs = 0
+const undoVisible = ref<boolean>(false)
+const undoText = ref<string>('')
 
 function clearUndo() {
-  undoId = ''
+  undoAct = ''
+  undoNight = ''
   undoTs = 0
   undoVisible.value = false
   if (undoTimer != -1) {
@@ -111,42 +261,89 @@ function clearUndo() {
   }
 }
 
-function onAdd() {
-  const now = Date.now()
-  if (now - lastClick < 800) {
-    return
-  }
-  lastClick = now
-  const rec = addRecord(now)
-  records.value.push(rec)
-  uni.vibrateShort({ type: 'light' })
-  undoId = rec.id
-  undoTs = rec.ts
-  undoText.value = '已记录 ' + fmtHM(rec.ts)
+function showUndo(act: string, night: string, ts: number, text: string) {
+  undoAct = act
+  undoNight = night
+  undoTs = ts
+  undoText.value = text
   undoVisible.value = true
   if (undoTimer != -1) {
     clearTimeout(undoTimer)
   }
   undoTimer = setTimeout(() => {
     undoVisible.value = false
+    undoAct = ''
     undoTimer = -1
   }, 5000)
+}
+
+function refresh() {
+  sessions.value = loadAllSessions()
+  nowTs.value = Date.now()
   // #ifdef APP-ANDROID
   updateNotifySummary()
   // #endif
 }
 
-function onUndo() {
-  if (undoId.length == 0) {
+function onMain() {
+  const now = Date.now()
+  if (now - lastClick < 800) {
     return
   }
-  deleteRecord(undoId, undoTs)
-  removeLocal(undoId)
-  clearUndo()
-  // #ifdef APP-ANDROID
-  updateNotifySummary()
-  // #endif
+  const p = phase.value
+  if (p == 'idle') {
+    lastClick = now
+    const s = recordAsleep(now)
+    uni.vibrateShort({ type: 'light' })
+    showUndo('asleep', s.night, now, '已记入睡 ' + fmtHM(now))
+    refresh()
+  } else if (p == 'sleeping') {
+    lastClick = now
+    const s = recordWake(now)
+    uni.vibrateShort({ type: 'light' })
+    showUndo('wake', s.night, now, '已记醒了 ' + fmtHM(now))
+    refresh()
+  }
 }
+
+function onRise() {
+  if (phase.value != 'sleeping') {
+    return
+  }
+  const now = Date.now()
+  const s = recordRise(now)
+  uni.vibrateShort({ type: 'light' })
+  showUndo('rise', s.night, now, '已记起床 ' + fmtHM(now))
+  refresh()
+}
+
+function onReopen() {
+  if (phase.value != 'done') {
+    return
+  }
+  const t = tonight.value
+  if (t == null) {
+    return
+  }
+  reopenSession(t.night)
+  uni.vibrateShort({ type: 'light' })
+  clearUndo()
+  refresh()
+}
+
+function onUndo() {
+  if (undoAct.length == 0) {
+    return
+  }
+  const info: UndoInfo = { action: undoAct, night: undoNight, ts: undoTs }
+  undoAction(info)
+  clearUndo()
+  refresh()
+}
+
+onShow(() => {
+  refresh()
+})
 </script>
 
 <style>
@@ -162,7 +359,7 @@ function onUndo() {
 }
 .stat {
   align-items: center;
-  margin-bottom: 70rpx;
+  margin-bottom: 56rpx;
 }
 .stat-label {
   font-size: 32rpx;
@@ -179,6 +376,10 @@ function onUndo() {
   color: #f0f1fb;
   line-height: 150rpx;
 }
+.stat-num-dur {
+  font-size: 104rpx;
+  line-height: 116rpx;
+}
 .stat-unit {
   font-size: 32rpx;
   color: #9094bd;
@@ -189,6 +390,33 @@ function onUndo() {
   font-size: 26rpx;
   color: #9094bd;
   margin-top: 12rpx;
+}
+.night-bar {
+  width: 520rpx;
+  margin-bottom: 44rpx;
+}
+.bar-track {
+  position: relative;
+  height: 16rpx;
+  border-radius: 8rpx;
+  background-color: #4c5cc0;
+}
+.bar-dot {
+  position: absolute;
+  top: -4rpx;
+  width: 24rpx;
+  height: 24rpx;
+  border-radius: 12rpx;
+  background-color: #ffc84a;
+}
+.bar-cap {
+  flex-direction: row;
+  justify-content: space-between;
+  margin-top: 14rpx;
+}
+.bar-cap-text {
+  font-size: 24rpx;
+  color: #9094bd;
 }
 .big-btn {
   width: 400rpx;
@@ -202,15 +430,41 @@ function onUndo() {
   transform: scale(0.93);
   background-image: linear-gradient(180deg, #f0a81c, #e29a10);
 }
+.big-btn-off {
+  background-image: linear-gradient(180deg, #22264c, #22264c);
+}
 .big-btn-main {
   font-size: 80rpx;
   font-weight: bold;
   color: #3f2d04;
 }
+.big-btn-main-off {
+  font-size: 56rpx;
+  font-weight: bold;
+  color: #9094bd;
+}
 .big-btn-sub {
   font-size: 26rpx;
   color: #6b4d0a;
   margin-top: 10rpx;
+}
+.big-btn-sub-off {
+  font-size: 26rpx;
+  color: #5a5e8a;
+  margin-top: 10rpx;
+}
+.pill-btn {
+  background-color: #22264c;
+  border-radius: 999rpx;
+  padding: 20rpx 44rpx;
+  margin-top: 40rpx;
+}
+.pill-btn-press {
+  background-color: #2d3161;
+}
+.pill-btn-text {
+  font-size: 28rpx;
+  color: #f0f1fb;
 }
 .undo-bar {
   flex-direction: row;
@@ -218,7 +472,7 @@ function onUndo() {
   background-color: #22264c;
   border-radius: 999rpx;
   padding: 12rpx 14rpx 12rpx 32rpx;
-  margin-top: 48rpx;
+  margin-top: 40rpx;
 }
 .undo-text {
   font-size: 28rpx;
@@ -241,6 +495,6 @@ function onUndo() {
 .last-line {
   font-size: 26rpx;
   color: #9094bd;
-  margin-top: 48rpx;
+  margin-top: 40rpx;
 }
 </style>

@@ -14,31 +14,45 @@
           <text class="chip-text">{{ weekText }}</text>
         </view>
       </view>
-      <view v-if="sections.length == 0" class="empty">
+      <view v-if="nights.length == 0" class="empty">
         <text class="empty-main">还没有记录</text>
-        <text class="empty-sub">去「记录」点第一笔吧</text>
+        <text class="empty-sub">晚上去「记录」点「睡着了」开始</text>
       </view>
       <view v-for="sec in sections" :key="sec.label" class="section">
         <view class="month-seg">
           <text class="month-text">{{ sec.label }}</text>
         </view>
-        <view v-for="g in sec.nights" :key="g.night" class="card">
-          <view class="card-head" hover-class="card-head-press" @click="toggle(g.night)">
-            <text class="card-date">{{ g.dateLabel }}</text>
+        <view v-for="n in sec.nights" :key="n.night" class="card">
+          <view class="card-head" hover-class="card-head-press" @click="toggle(n.night)">
+            <view class="card-head-left">
+              <text class="card-date">{{ n.dateLabel }}</text>
+              <text class="card-sub">{{ n.headSub }}</text>
+            </view>
             <view class="card-cnt">
-              <text class="card-cnt-text">醒了 {{ g.count }} 次</text>
-              <text class="card-arrow">{{ isExpanded(g.night) ? '▴' : '▾' }}</text>
+              <text class="card-cnt-text">{{ n.count > 0 ? '醒了 ' + n.count + ' 次' : '一觉到天亮' }}</text>
+              <text class="card-arrow">{{ isExpanded(n.night) ? '▴' : '▾' }}</text>
             </view>
           </view>
-          <view v-if="isExpanded(g.night)" class="card-body">
-            <text class="card-window">{{ g.windowText }}</text>
-            <view v-for="item in g.list" :key="item.id" class="wake-item">
-              <text class="wake-time">{{ item.time }}</text>
-              <text class="wake-gap">{{ item.gap }}</text>
-              <view class="wake-del" hover-class="wake-del-press" @click="confirmDelete(item.id, item.ts)">
+          <view v-if="isExpanded(n.night)" class="card-body">
+            <view v-if="n.hasTimeline" class="tl">
+              <view class="tl-track">
+                <view class="tl-fill" :style="'left:' + n.fillLeft + ';width:' + n.fillWidth"></view>
+                <view v-for="d in n.dots" :key="d" class="tl-dot" :style="'left:' + d"></view>
+              </view>
+              <view class="tl-scale">
+                <text class="tl-scale-text">{{ n.tlStartLabel }}</text>
+                <text class="tl-scale-text">{{ n.tlEndLabel }}</text>
+              </view>
+            </view>
+            <view v-for="e in n.events" :key="'e' + e.ts.toString()" class="wake-item">
+              <text class="wake-time">{{ e.time }}</text>
+              <text class="wake-label">{{ e.label }}</text>
+              <text class="wake-gap">{{ e.dur }}</text>
+              <view v-if="e.delId.length > 0" class="wake-del" hover-class="wake-del-press" @click="confirmDelete(e.delId, e.ts, n.night)">
                 <text class="wake-del-text">×</text>
               </view>
             </view>
+            <text v-if="n.bestText.length > 0" class="best-line">{{ n.bestText }}</text>
           </view>
         </view>
       </view>
@@ -49,23 +63,31 @@
 <script setup lang="uts">
 import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
-import { loadAllRecords, deleteRecord, groupByNight } from '@/common/store.uts'
-import { WakeRecord } from '@/common/store.uts'
-import { fmtHM, fmtMD, weekdayCn, nightDate, nightStartTs, nightWindowText, gapText, lastCompletedNightKey } from '@/common/time.uts'
+import { loadAllSessions, deleteWake } from '@/common/store.uts'
+import { SleepSession } from '@/common/store.uts'
+import { fmtHM, fmtMD, weekdayCn, gapText, nightDate, nightStartTs, lastCompletedNightKey } from '@/common/time.uts'
 
-type DisplayWake = {
-  id: string,
+type DisplayEvent = {
+  delId: string,      // 可删除的醒点 id；入睡/起床行为空
   ts: number,
   time: string,
-  gap: string
+  label: string,      // 入睡 / 醒了 / 起床
+  dur: string         // 这一觉 XhYm（首尾不全时为空）
 }
 
 type DisplayNight = {
   night: string,
   dateLabel: string,
-  windowText: string,
+  headSub: string,
   count: number,
-  list: Array<DisplayWake>
+  hasTimeline: boolean,
+  fillLeft: string,
+  fillWidth: string,
+  dots: Array<string>,
+  tlStartLabel: string,
+  tlEndLabel: string,
+  events: Array<DisplayEvent>,
+  bestText: string
 }
 
 type DisplaySection = {
@@ -74,7 +96,7 @@ type DisplaySection = {
 }
 
 const nowTs = ref<number>(Date.now())
-const records = ref<Array<WakeRecord>>([])
+const sessions = ref<Array<SleepSession>>([])
 const expanded = ref<Array<string>>([])
 
 function isExpanded(night: string): boolean {
@@ -94,27 +116,128 @@ function openSettings() {
   uni.navigateTo({ url: '/pages/settings/settings' })
 }
 
+// 一段连续睡眠（相邻事件之间的间隔）
+type SleepSeg = {
+  durMs: number,
+  label: string
+}
+
+function pct(v: number, span: number): string {
+  let p = v * 100 / span
+  if (p < 0) {
+    p = 0
+  }
+  if (p > 100) {
+    p = 100
+  }
+  return p.toFixed(1) + '%'
+}
+
+function buildNight(s: SleepSession): DisplayNight {
+  const startTs = nightStartTs(s.night)
+  const wakes = s.wakes
+  // 明细事件
+  const events: Array<DisplayEvent> = []
+  const segs: Array<SleepSeg> = []
+  if (s.bedtime > 0) {
+    events.push({ delId: '', ts: s.bedtime, time: fmtHM(s.bedtime), label: '入睡', dur: '' })
+  }
+  for (let i = 0; i < wakes.length; i++) {
+    const prev = i == 0 ? s.bedtime : wakes[i - 1].ts
+    let dur = ''
+    if (prev > 0) {
+      dur = '这一觉 ' + gapText(wakes[i].ts - prev)
+      const segLabel = i == 0 ? '入睡到第一次醒' : '第' + i.toString() + '次醒后'
+      segs.push({ durMs: wakes[i].ts - prev, label: segLabel })
+    }
+    events.push({ delId: wakes[i].id, ts: wakes[i].ts, time: fmtHM(wakes[i].ts), label: '醒了', dur: dur })
+  }
+  if (s.wakeUp > 0) {
+    let prev = 0
+    if (wakes.length > 0) {
+      prev = wakes[wakes.length - 1].ts
+    } else {
+      prev = s.bedtime
+    }
+    let dur = ''
+    if (prev > 0) {
+      if (wakes.length == 0 && s.bedtime > 0) {
+        dur = '一觉到天亮'
+        segs.push({ durMs: s.wakeUp - prev, label: '一觉到天亮' })
+      } else {
+        dur = '这一觉 ' + gapText(s.wakeUp - prev)
+        segs.push({ durMs: s.wakeUp - prev, label: '末次醒到起床' })
+      }
+    }
+    events.push({ delId: '', ts: s.wakeUp, time: fmtHM(s.wakeUp), label: '起床', dur: dur })
+  }
+  // 最长一觉
+  let bestText = ''
+  let best: SleepSeg | null = null
+  for (let i = 0; i < segs.length; i++) {
+    if (best == null || segs[i].durMs > best.durMs) {
+      best = segs[i]
+    }
+  }
+  if (best != null) {
+    bestText = '最长一觉 ' + gapText(best.durMs) + ' · ' + best.label
+  }
+  // 卡片副行
+  let headSub = ''
+  if (s.bedtime > 0 && s.wakeUp > 0) {
+    headSub = fmtHM(s.bedtime) + ' → ' + fmtHM(s.wakeUp) + ' · 整夜 ' + gapText(s.wakeUp - s.bedtime)
+  } else if (s.bedtime > 0 && s.wakeUp == 0) {
+    headSub = '入睡 ' + fmtHM(s.bedtime) + ' · 未记起床'
+  } else if (s.bedtime == 0 && s.wakeUp > 0) {
+    headSub = '未记入睡 · 起床 ' + fmtHM(s.wakeUp)
+  } else {
+    headSub = '旧版数据 · 未记入睡/起床'
+  }
+  // 夜间时间轴（有入睡才画）：20:00 → max(起床, 次日 07:00)，蓝条=睡，黄点=醒
+  const hasTimeline = s.bedtime > 0
+  const dots: Array<string> = []
+  let fillLeft = '0%'
+  let fillWidth = '0%'
+  let tlStartLabel = ''
+  let tlEndLabel = ''
+  if (hasTimeline) {
+    let endTs = startTs + 11 * 3600 * 1000
+    if (s.wakeUp > endTs) {
+      endTs = s.wakeUp
+    }
+    if (s.wakeUp == 0 && nowTs.value > endTs) {
+      endTs = nowTs.value
+    }
+    const span = endTs - startTs
+    fillLeft = pct(s.bedtime - startTs, span)
+    fillWidth = pct((s.wakeUp > 0 ? s.wakeUp : nowTs.value) - s.bedtime, span)
+    for (let i = 0; i < wakes.length; i++) {
+      dots.push(pct(wakes[i].ts - startTs, span))
+    }
+    tlStartLabel = fmtHM(startTs)
+    tlEndLabel = fmtHM(endTs)
+  }
+  const dn: DisplayNight = {
+    night: s.night,
+    dateLabel: fmtMD(startTs) + ' · ' + weekdayCn(startTs),
+    headSub: headSub,
+    count: wakes.length,
+    hasTimeline: hasTimeline,
+    fillLeft: fillLeft,
+    fillWidth: fillWidth,
+    dots: dots,
+    tlStartLabel: tlStartLabel,
+    tlEndLabel: tlEndLabel,
+    events: events,
+    bestText: bestText
+  }
+  return dn
+}
+
 const nights = computed((): Array<DisplayNight> => {
-  const groups = groupByNight(records.value)
   const out: Array<DisplayNight> = []
-  for (let i = 0; i < groups.length; i++) {
-    const g = groups[i]
-    const startTs = nightStartTs(g.night)
-    const asc = g.list
-    const list: Array<DisplayWake> = []
-    for (let j = asc.length - 1; j >= 0; j--) {
-      const gap = j == 0 ? '本晚首次' : '距上次 ' + gapText(asc[j].ts - asc[j - 1].ts)
-      const item: DisplayWake = { id: asc[j].id, ts: asc[j].ts, time: fmtHM(asc[j].ts), gap: gap }
-      list.push(item)
-    }
-    const dn: DisplayNight = {
-      night: g.night,
-      dateLabel: fmtMD(startTs) + ' · ' + weekdayCn(startTs),
-      windowText: nightWindowText(g.night),
-      count: asc.length,
-      list: list
-    }
-    out.push(dn)
+  for (let i = 0; i < sessions.value.length; i++) {
+    out.push(buildNight(sessions.value[i]))
   }
   return out
 })
@@ -145,59 +268,59 @@ const sections = computed((): Array<DisplaySection> => {
   return out
 })
 
-// 首位高亮胶囊：昨晚（最近一个已结束的夜）；"今晚"进行中的统计只在记录页
-const lastNightText = computed((): string => {
-  const key = lastCompletedNightKey(nowTs.value)
-  let count = 0
-  for (let i = 0; i < records.value.length; i++) {
-    if (nightDate(records.value[i].ts) == key) {
-      count++
+function findSession(night: string): SleepSession | null {
+  for (let i = 0; i < sessions.value.length; i++) {
+    if (sessions.value[i].night == night) {
+      return sessions.value[i]
     }
   }
-  return '昨晚醒 ' + count.toString() + ' 次'
+  return null
+}
+
+// 首位高亮胶囊：最近一个已结束的夜
+const lastNightText = computed((): string => {
+  const t = findSession(lastCompletedNightKey(nowTs.value))
+  if (t == null) {
+    return '昨晚无记录'
+  }
+  let text = '昨晚醒 ' + t.wakes.length.toString() + ' 次'
+  if (t.bedtime > 0 && t.wakeUp > 0) {
+    text = text + ' · 整夜 ' + gapText(t.wakeUp - t.bedtime)
+  }
+  return text
 })
 
-// 近 7 天合计：最近 7 个已结束夜（含 0 次的夜）的记录总数，
-// 按时间窗口 [7 天前那夜 20:00, 昨夜次日 07:00) 统计，进行中的一夜与白天误点不计入
+// 近 7 天合计：最近 7 个已结束夜的醒点总数（含 0 次的夜）
 const weekText = computed((): string => {
   const endKey = lastCompletedNightKey(nowTs.value)
   const startKey = nightDate(nowTs.value - 7 * 24 * 3600 * 1000)
-  const from = nightStartTs(startKey)
-  const to = nightStartTs(endKey) + 11 * 3600 * 1000
   let count = 0
-  for (let i = 0; i < records.value.length; i++) {
-    const ts = records.value[i].ts
-    if (ts >= from && ts < to) {
-      count++
+  for (let i = 0; i < sessions.value.length; i++) {
+    const s = sessions.value[i]
+    if (s.night >= startKey && s.night <= endKey) {
+      count += s.wakes.length
     }
   }
   return '近 7 天合计 ' + count.toString() + ' 次'
 })
 
 onShow(() => {
-  records.value = loadAllRecords()
+  sessions.value = loadAllSessions()
   nowTs.value = Date.now()
-  if (expanded.value.length == 0 && records.value.length > 0) {
-    expanded.value.push(nightDate(records.value[records.value.length - 1].ts))
+  if (expanded.value.length == 0 && sessions.value.length > 0) {
+    expanded.value.push(sessions.value[0].night)
   }
 })
 
-function doDelete(id: string, ts: number) {
-  deleteRecord(id, ts)
-  const idx = records.value.findIndex((r: WakeRecord): boolean => r.id == id)
-  if (idx >= 0) {
-    records.value.splice(idx, 1)
-  }
-}
-
-function confirmDelete(id: string, ts: number) {
+function confirmDelete(id: string, ts: number, night: string) {
   uni.showModal({
     title: '删除记录',
     content: '删除 ' + fmtHM(ts) + ' 这条记录？',
     confirmText: '删除',
     success: (res) => {
       if (res.confirm) {
-        doDelete(id, ts)
+        deleteWake(night, id)
+        sessions.value = loadAllSessions()
       }
     }
   })
@@ -277,15 +400,26 @@ function confirmDelete(id: string, ts: number) {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  padding: 30rpx 32rpx;
+  padding: 26rpx 32rpx;
 }
 .card-head-press {
   background-color: #22264c;
+}
+.card-head-left {
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-right: 20rpx;
 }
 .card-date {
   font-size: 32rpx;
   font-weight: bold;
   color: #f0f1fb;
+}
+.card-sub {
+  font-size: 24rpx;
+  color: #9094bd;
+  margin-top: 8rpx;
 }
 .card-cnt {
   flex-direction: row;
@@ -304,10 +438,38 @@ function confirmDelete(id: string, ts: number) {
 .card-body {
   padding: 0 18rpx 18rpx;
 }
-.card-window {
+.tl {
+  padding: 8rpx 12rpx 4rpx;
+}
+.tl-track {
+  position: relative;
+  height: 20rpx;
+  border-radius: 10rpx;
+  background-color: #2a2e55;
+}
+.tl-fill {
+  position: absolute;
+  top: 0;
+  height: 20rpx;
+  border-radius: 10rpx;
+  background-color: #4c5cc0;
+}
+.tl-dot {
+  position: absolute;
+  top: -2rpx;
+  width: 24rpx;
+  height: 24rpx;
+  border-radius: 12rpx;
+  background-color: #ffc84a;
+}
+.tl-scale {
+  flex-direction: row;
+  justify-content: space-between;
+  margin-top: 12rpx;
+}
+.tl-scale-text {
   font-size: 24rpx;
-  color: #9094bd;
-  margin: 6rpx 12rpx 16rpx;
+  color: #6a6e96;
 }
 .wake-item {
   flex-direction: row;
@@ -322,9 +484,13 @@ function confirmDelete(id: string, ts: number) {
   font-weight: bold;
   color: #f0f1fb;
 }
-.wake-gap {
+.wake-label {
+  font-size: 28rpx;
+  color: #c6c9e6;
   flex: 1;
-  text-align: right;
+  margin-left: 16rpx;
+}
+.wake-gap {
   font-size: 26rpx;
   color: #9094bd;
   margin-right: 16rpx;
@@ -342,6 +508,11 @@ function confirmDelete(id: string, ts: number) {
 .wake-del-text {
   font-size: 36rpx;
   color: #9094bd;
+}
+.best-line {
+  font-size: 26rpx;
+  color: #ffc84a;
+  margin: 6rpx 24rpx 12rpx;
 }
 .empty {
   align-items: center;
